@@ -66,58 +66,22 @@ const filesById = new Map(dataset.attachments.map((file) => [file.id, file]));
 const occupationMetaByKey = new Map(occupationRecords.map((occupation) => [occupation.key, occupation]));
 const modelById = new Map(dataset.models.map((model) => [model.modelId, model]));
 const comparePalette = ['#1f5c63', '#9a6d2f'];
-const macroGroups = [
-  {
-    id: 'finance-business',
-    label: 'Finance & Business Services',
-    shortLabel: 'Finance & Biz',
-    sectors: ['Finance and Insurance', 'Professional, Scientific, and Technical Services'],
-  },
-  {
-    id: 'public',
-    label: 'Public Sector',
-    shortLabel: 'Public',
-    sectors: ['Government'],
-  },
-  {
-    id: 'health',
-    label: 'Health & Care',
-    shortLabel: 'Health',
-    sectors: ['Health Care and Social Assistance'],
-  },
-  {
-    id: 'information',
-    label: 'Information',
-    shortLabel: 'Info',
-    sectors: ['Information'],
-  },
-  {
-    id: 'industry',
-    label: 'Industry & Supply Chain',
-    shortLabel: 'Industry',
-    sectors: ['Manufacturing', 'Wholesale Trade'],
-  },
-  {
-    id: 'commerce-property',
-    label: 'Commerce & Property',
-    shortLabel: 'Commerce',
-    sectors: ['Retail Trade', 'Real Estate and Rental and Leasing'],
-  },
-];
-const macroGroupBySector = new Map(
-  macroGroups.flatMap((group) => group.sectors.map((sector) => [sector, group.id])),
-);
-const macroGroupMeta = macroGroups.map((group) => {
-  const occupations = occupationRecords.filter((occupation) => group.sectors.includes(occupation.sector));
-  return {
-    ...group,
-    taskCount: occupations.reduce((sum, occupation) => sum + Number(occupation.taskCount || 0), 0),
-    occupationCount: occupations.length,
-  };
-});
-const macroGroupMetaById = new Map(macroGroupMeta.map((group) => [group.id, group]));
-const macroScoresByModel = buildMacroScoresByModel();
-const macroTopPerformance = buildMacroTopPerformance();
+const sectorShortLabelByName = new Map([
+  ['Finance and Insurance', 'Finance'],
+  ['Government', 'Government'],
+  ['Health Care and Social Assistance', 'Health care'],
+  ['Information', 'Information'],
+  ['Manufacturing', 'Manufacturing'],
+  ['Professional, Scientific, and Technical Services', 'Prof. services'],
+  ['Real Estate and Rental and Leasing', 'Real estate'],
+  ['Retail Trade', 'Retail'],
+  ['Wholesale Trade', 'Wholesale'],
+]);
+const sectorDisplayMeta = dataset.sectors.map((sector) => ({
+  ...sector,
+  shortLabel: sectorShortLabelByName.get(sector.name) || sector.name,
+}));
+const sectorStatsByModel = buildSectorStatsByModel();
 
 function occupationKey(sector, occupation) {
   return `${sector}||${occupation}`;
@@ -152,6 +116,10 @@ function formatDelta(value) {
   return `${points >= 0 ? '+' : ''}${points.toFixed(1)} pts`;
 }
 
+function formatPoints(value) {
+  return `${(Number(value) * 100).toFixed(1)} pts`;
+}
+
 function formatBytes(value) {
   if (!Number.isFinite(value) || value <= 0) return '-';
   const units = ['B', 'KB', 'MB', 'GB'];
@@ -170,6 +138,16 @@ function formatInteger(value) {
 
 function mean(values) {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+}
+
+function median(values) {
+  const sorted = values
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => a - b);
+  if (!sorted.length) return 0;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 function shortText(value, length = 180) {
@@ -211,6 +189,10 @@ function formatVerifiedAt() {
     hour: 'numeric',
     minute: '2-digit',
   }).format(new Date(value));
+}
+
+function scoreMeaningSentence() {
+  return 'Wins means the AI was judged better than the human expert. Wins+T includes cases where the AI matched the human.';
 }
 
 function occupationsBySector() {
@@ -263,64 +245,56 @@ function previewPayload(fileId) {
   return window.__GDPVAL_PREVIEWS[fileId] || null;
 }
 
-function buildMacroScoresByModel() {
+function buildSectorStatsByModel() {
   const output = new Map();
 
   for (const model of visibleModels) {
-    const buckets = macroGroups.map((group) => ({
-      ...macroGroupMetaById.get(group.id),
-      winTotal: 0,
-      winOrTieTotal: 0,
-      weight: 0,
-      winRate: 0,
-      winOrTieRate: 0,
-      overallWinOrTieRate: Number(model.overallWinOrTieRate || 0),
-      deltaWinOrTieRate: 0,
-    }));
-    const bucketById = new Map(buckets.map((bucket) => [bucket.id, bucket]));
+    const sectorRows = sectorDisplayMeta.map((sectorMeta) => {
+      const rows = dataset.occupationScores
+        .filter((row) => row.modelId === model.modelId && row.sector === sectorMeta.name && !row.hidden)
+        .sort((a, b) => Number(a.winOrTieRate) - Number(b.winOrTieRate) || a.occupation.localeCompare(b.occupation));
+      if (!rows.length) {
+        return {
+          ...sectorMeta,
+          occupationCount: 0,
+          minWinOrTieRate: 0,
+          medianWinOrTieRate: 0,
+          maxWinOrTieRate: 0,
+          meanWinOrTieRate: 0,
+          overallWinOrTieRate: Number(model.overallWinOrTieRate || 0),
+          deltaMedianVsOverall: 0,
+          spread: 0,
+          weakest: null,
+          strongest: null,
+        };
+      }
 
-    for (const row of dataset.occupationScores) {
-      if (row.modelId !== model.modelId) continue;
-      const groupId = macroGroupBySector.get(row.sector);
-      if (!groupId) continue;
-      const bucket = bucketById.get(groupId);
-      const weight = Number(occupationMetaByKey.get(occupationKey(row.sector, row.occupation))?.taskCount || 1);
-      bucket.weight += weight;
-      bucket.winTotal += Number(row.winRate) * weight;
-      bucket.winOrTieTotal += Number(row.winOrTieRate) * weight;
-    }
+      const rates = rows.map((row) => Number(row.winOrTieRate || 0));
+      const minWinOrTieRate = rates[0];
+      const maxWinOrTieRate = rates[rates.length - 1];
+      const medianWinOrTieRate = median(rates);
+      const meanWinOrTieRate = mean(rates);
+      const overallWinOrTieRate = Number(model.overallWinOrTieRate || 0);
 
-    for (const bucket of buckets) {
-      bucket.winRate = bucket.weight ? bucket.winTotal / bucket.weight : 0;
-      bucket.winOrTieRate = bucket.weight ? bucket.winOrTieTotal / bucket.weight : 0;
-      bucket.deltaWinOrTieRate = bucket.winOrTieRate - bucket.overallWinOrTieRate;
-    }
+      return {
+        ...sectorMeta,
+        occupationCount: rows.length,
+        minWinOrTieRate,
+        medianWinOrTieRate,
+        maxWinOrTieRate,
+        meanWinOrTieRate,
+        overallWinOrTieRate,
+        deltaMedianVsOverall: medianWinOrTieRate - overallWinOrTieRate,
+        spread: maxWinOrTieRate - minWinOrTieRate,
+        weakest: rows[0],
+        strongest: rows[rows.length - 1],
+      };
+    }).filter((row) => row.occupationCount > 0);
 
-    output.set(model.modelId, buckets);
+    output.set(model.modelId, sectorRows);
   }
 
   return output;
-}
-
-function buildMacroTopPerformance() {
-  return macroGroupMeta.map((group) => {
-    const rows = visibleModels.map((model) => {
-      const macroRow = (macroScoresByModel.get(model.modelId) || []).find((row) => row.id === group.id && row.weight > 0);
-      return macroRow ? { ...macroRow, label: model.label } : null;
-    }).filter(Boolean);
-
-    const topWin = rows.reduce((best, row) => (Number(row.winRate) > Number(best?.winRate || -1) ? row : best), null);
-    const topWinOrTie = rows.reduce((best, row) => (Number(row.winOrTieRate) > Number(best?.winOrTieRate || -1) ? row : best), null);
-
-    return {
-      ...group,
-      topWinRate: Number(topWin?.winRate || 0),
-      topWinLabel: topWin?.label || 'N/A',
-      topWinOrTieRate: Number(topWinOrTie?.winOrTieRate || 0),
-      topWinOrTieLabel: topWinOrTie?.label || 'N/A',
-      ceilingGap: Number(topWinOrTie?.winOrTieRate || 0) - Number(topWin?.winRate || 0),
-    };
-  });
 }
 
 function modelOccupationSummary(modelId) {
@@ -357,27 +331,26 @@ function selectedCompareModels() {
   return [primary, secondary].filter(Boolean);
 }
 
-function modelMacroSummary(modelId) {
-  const rows = (macroScoresByModel.get(modelId) || []).filter((row) => row.weight > 0);
+function modelSectorSummary(modelId) {
+  const rows = sectorStatsByModel.get(modelId) || [];
   const model = modelById.get(modelId);
   if (!rows.length || !model) {
     return {
-      spread: 0,
-      jaggedness: 0,
-      best: null,
-      weakest: null,
+      meanDeviation: 0,
+      widest: null,
+      highestMedian: null,
+      lowestMedian: null,
       overall: Number(model?.overallWinOrTieRate || 0),
     };
   }
 
-  const sorted = [...rows].sort((a, b) => b.winOrTieRate - a.winOrTieRate);
-  const best = sorted[0];
-  const weakest = sorted[sorted.length - 1];
+  const sortedByMedian = [...rows].sort((a, b) => b.medianWinOrTieRate - a.medianWinOrTieRate);
+  const sortedBySpread = [...rows].sort((a, b) => b.spread - a.spread);
   return {
-    spread: best.winOrTieRate - weakest.winOrTieRate,
-    jaggedness: mean(rows.map((row) => Math.abs(row.winOrTieRate - Number(model.overallWinOrTieRate || 0)))),
-    best,
-    weakest,
+    meanDeviation: mean(rows.map((row) => Math.abs(row.medianWinOrTieRate - Number(model.overallWinOrTieRate || 0)))),
+    widest: sortedBySpread[0],
+    highestMedian: sortedByMedian[0],
+    lowestMedian: sortedByMedian[sortedByMedian.length - 1],
     overall: Number(model.overallWinOrTieRate || 0),
   };
 }
@@ -436,7 +409,7 @@ function renderViewSwitch() {
     overview: 'Key takeaways',
     tasks: `${currentTasks().length} public tasks`,
     files: `${currentFiles().length} linked files`,
-    jaggedness: 'Cross-field spread',
+    jaggedness: `${dataset.sectors.length} sector spreads`,
     models: `${visibleModels.length} overall models`,
   };
   refs.viewSwitch.innerHTML = viewTabs.map((tab) => `
@@ -497,34 +470,34 @@ function renderJaggednessFocusCard() {
     <div class="focus-top">
       <div>
         <p class="section-kicker">Jaggedness</p>
-        <h2>Consistency across major work domains</h2>
-        <p class="lede">Choose one or two models to see whether performance stays steady across work domains or spikes in a few. GDPval's 9 sectors are compressed into 6 macro groups so the pattern stays readable.</p>
+        <h2>Sector spread using all subfields</h2>
+        <p class="lede">Each sector below uses all of its underlying GDPval subfields. The dot is the median subfield Wins+T for the selected model, and the vertical stem shows the weakest-to-strongest subfield average inside that sector.</p>
         <div class="badge-row">
           ${models.map((model) => `<span class="badge soft">${esc(model.label)}</span>`).join('')}
-          <span class="badge good">lower deviation = steadier</span>
+          <span class="badge good">all 44 subfields included</span>
         </div>
       </div>
     </div>
     <div class="focus-stats">
       <div class="mini-stat">
-        <div class="stat-label">Groups</div>
-        <strong>${macroGroups.length}</strong>
-        <div class="note">from 9 sectors</div>
+        <div class="stat-label">Sectors</div>
+        <strong>${dataset.sectors.length}</strong>
+        <div class="note">actual GDPval sectors</div>
       </div>
       <div class="mini-stat">
         <div class="stat-label">Subfields</div>
         <strong>${occupationRecords.length}</strong>
-        <div class="note">all public occupations</div>
+        <div class="note">included in the spread</div>
       </div>
       <div class="mini-stat">
-        <div class="stat-label">Tasks</div>
-        <strong>${formatInteger(dataset.tasks.length)}</strong>
-        <div class="note">weighted into each group</div>
+        <div class="stat-label">Signal</div>
+        <strong>Low · Median · High</strong>
+        <div class="note">within-sector subfield range</div>
       </div>
       <div class="mini-stat">
-        <div class="stat-label">Reading</div>
-        <strong>Solid vs dashed</strong>
-        <div class="note">group score vs overall baseline</div>
+        <div class="stat-label">Baseline</div>
+        <strong>Overall Wins+T</strong>
+        <div class="note">dashed reference line</div>
       </div>
     </div>
   `;
@@ -623,6 +596,7 @@ function renderPerformancePanel(scores) {
         </div>
         <span class="badge soft">${scores.length} models</span>
       </div>
+      <p class="note panel-subnote">${esc(scoreMeaningSentence())}</p>
       <div class="bar-stack">
         ${rows.map((row) => `
           <div class="bar-row">
@@ -899,7 +873,7 @@ function renderModelsView() {
         </div>
         <span class="badge soft">${scores.length} models</span>
       </div>
-      <p class="note panel-subnote">This leaderboard is benchmark-wide. It does not change with sector or subfield selection.</p>
+      <p class="note panel-subnote">This leaderboard is benchmark-wide. It does not change with sector or subfield selection. ${esc(scoreMeaningSentence())}</p>
       <div class="bar-stack">
         ${scores.map((row) => `
           <div class="bar-row">
@@ -967,7 +941,7 @@ function renderJaggednessSelect(id, label, selectedId, options, { allowEmpty = f
 }
 
 function jaggednessSeries(modelId) {
-  return (macroScoresByModel.get(modelId) || []).filter((row) => row.weight > 0);
+  return sectorStatsByModel.get(modelId) || [];
 }
 
 function renderJaggednessChart(models) {
@@ -975,28 +949,36 @@ function renderJaggednessChart(models) {
     model,
     color: comparePalette[index % comparePalette.length],
     rows: jaggednessSeries(model.modelId),
-    summary: modelMacroSummary(model.modelId),
+    summary: modelSectorSummary(model.modelId),
   }));
-  const values = series.flatMap((item) => item.rows.map((row) => row.winOrTieRate))
+  const sectorsInChart = sectorDisplayMeta.filter((sector) => series.some((item) => item.rows.some((row) => row.name === sector.name)));
+  const values = series.flatMap((item) => item.rows.flatMap((row) => [
+    row.minWinOrTieRate,
+    row.medianWinOrTieRate,
+    row.maxWinOrTieRate,
+  ]))
     .concat(series.map((item) => Number(item.model.overallWinOrTieRate || 0)));
   const minValue = values.length ? Math.max(0, Math.floor((Math.min(...values) - 0.03) * 20) / 20) : 0;
   const maxValue = values.length ? Math.min(1, Math.ceil((Math.max(...values) + 0.03) * 20) / 20) : 1;
   const range = Math.max(maxValue - minValue, 0.12);
-  const width = 780;
-  const height = 320;
-  const margin = { top: 24, right: 30, bottom: 64, left: 68 };
+  const width = 920;
+  const height = 360;
+  const margin = { top: 24, right: 30, bottom: 82, left: 68 };
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
-  const xFor = (index) => margin.left + (innerWidth * index) / Math.max(macroGroups.length - 1, 1);
+  const xFor = (index) => margin.left + (innerWidth * index) / Math.max(sectorsInChart.length - 1, 1);
   const yFor = (value) => margin.top + innerHeight - ((value - minValue) / range) * innerHeight;
   const ticks = Array.from({ length: 5 }, (_, index) => maxValue - (range * index) / 4);
+  const offsets = models.length === 1
+    ? [0]
+    : models.map((_, index) => (index === 0 ? -16 : 16));
 
   return `
     <article class="panel">
       <div class="section-head">
         <div>
           <p class="section-kicker">Model comparison</p>
-          <h3>Grouped wins+t profile</h3>
+          <h3>Median line with sector range</h3>
         </div>
         <span class="badge soft">${models.length === 1 ? 'single profile' : 'side by side'}</span>
       </div>
@@ -1004,20 +986,20 @@ function renderJaggednessChart(models) {
         ${renderJaggednessSelect('jagged-primary', 'Primary model', state.comparePrimary, visibleModels)}
         ${renderJaggednessSelect('jagged-secondary', 'Comparison model (optional)', state.compareSecondary, visibleModels.filter((model) => model.modelId !== state.comparePrimary), { allowEmpty: true })}
       </div>
-      <p class="note panel-subnote">Grouped sectors keep the chart readable. Solid lines show wins+t inside each macro group. Dashed lines show each model's own overall GDPval baseline.</p>
+      <p class="note panel-subnote">Every sector uses its full set of subfields. The dot marks the sector median, the stem spans the weakest to strongest subfield average, and the dashed line is the model's overall GDPval Wins+T. Here, 50% means the model matched or beat the human deliverable in about half of the subfield comparisons inside that sector.</p>
       <div class="chart-legend">
         ${series.map((item) => `
           <div class="legend-chip">
             <span class="legend-swatch" style="--swatch:${item.color};"></span>
             <div>
               <strong>${esc(item.model.label)}</strong>
-              <div class="note">Overall ${formatPercent(item.summary.overall)} · spread ${formatDelta(item.summary.spread)}</div>
+              <div class="note">Overall ${formatPercent(item.summary.overall)} · mean median deviation ${formatPoints(item.summary.meanDeviation)}</div>
             </div>
           </div>
         `).join('')}
       </div>
       <div class="jagged-chart-shell">
-        <svg class="jagged-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Wins and ties by grouped sector">
+        <svg class="jagged-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Median and range of sector performance across subfields">
           ${ticks.map((tick) => `
             <g>
               <line x1="${margin.left}" y1="${yFor(tick)}" x2="${width - margin.right}" y2="${yFor(tick)}" stroke="#d8d1c2" stroke-width="1" />
@@ -1027,25 +1009,39 @@ function renderJaggednessChart(models) {
           ${series.map((item) => `
             <g>
               <line x1="${margin.left}" y1="${yFor(item.summary.overall)}" x2="${width - margin.right}" y2="${yFor(item.summary.overall)}" stroke="${item.color}" stroke-opacity="0.35" stroke-width="2" stroke-dasharray="6 6" />
-              ${item.rows.length ? `<path d="M ${item.rows.map((row, index) => `${xFor(index)} ${yFor(row.winOrTieRate)}`).join(' L ')}" fill="none" stroke="${item.color}" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"></path>` : ''}
-              ${item.rows.map((row, index) => `
+              ${item.rows.length ? `<path d="M ${sectorsInChart.map((sector, index) => {
+    const row = item.rows.find((entry) => entry.name === sector.name);
+    return row ? `${xFor(index) + offsets[series.indexOf(item)]} ${yFor(row.medianWinOrTieRate)}` : '';
+  }).filter(Boolean).join(' L ')}" fill="none" stroke="${item.color}" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"></path>` : ''}
+              ${sectorsInChart.map((sector, index) => {
+    const row = item.rows.find((entry) => entry.name === sector.name);
+    if (!row) return '';
+    const x = xFor(index) + offsets[series.indexOf(item)];
+    const yMin = yFor(row.minWinOrTieRate);
+    const yMedian = yFor(row.medianWinOrTieRate);
+    const yMax = yFor(row.maxWinOrTieRate);
+    return `
                 <g>
-                  <circle cx="${xFor(index)}" cy="${yFor(row.winOrTieRate)}" r="6" fill="${item.color}" />
-                  <circle cx="${xFor(index)}" cy="${yFor(row.winOrTieRate)}" r="11" fill="${item.color}" fill-opacity="0.14" />
+                  <line x1="${x}" y1="${yMax}" x2="${x}" y2="${yMin}" stroke="${item.color}" stroke-opacity="0.7" stroke-width="4" stroke-linecap="round" />
+                  <line x1="${x - 6}" y1="${yMax}" x2="${x + 6}" y2="${yMax}" stroke="${item.color}" stroke-width="2" stroke-linecap="round" />
+                  <line x1="${x - 6}" y1="${yMin}" x2="${x + 6}" y2="${yMin}" stroke="${item.color}" stroke-width="2" stroke-linecap="round" />
+                  <circle cx="${x}" cy="${yMedian}" r="6" fill="${item.color}" />
+                  <circle cx="${x}" cy="${yMedian}" r="11" fill="${item.color}" fill-opacity="0.14" />
                 </g>
-              `).join('')}
+              `;
+  }).join('')}
             </g>
           `).join('')}
-          ${macroGroups.map((group, index) => `
+          ${sectorsInChart.map((sector, index) => `
             <g>
               <line x1="${xFor(index)}" y1="${margin.top}" x2="${xFor(index)}" y2="${height - margin.bottom + 8}" stroke="rgba(185, 173, 152, 0.35)" stroke-width="1" />
-              <text x="${xFor(index)}" y="${height - 24}" text-anchor="middle" fill="#1d2429" font-size="13" font-weight="600">${esc(group.shortLabel)}</text>
-              <text x="${xFor(index)}" y="${height - 8}" text-anchor="middle" fill="#5f695f" font-size="11">${formatInteger(macroGroupMetaById.get(group.id)?.taskCount || 0)} tasks</text>
+              <text x="${xFor(index)}" y="${height - 24}" text-anchor="middle" fill="#1d2429" font-size="13" font-weight="600">${esc(sector.shortLabel)}</text>
+              <text x="${xFor(index)}" y="${height - 8}" text-anchor="middle" fill="#5f695f" font-size="11">${formatInteger(sector.occupationCount || 0)} subfields</text>
             </g>
           `).join('')}
         </svg>
       </div>
-      <p class="note">Steeper peaks and dips indicate specialization. Flatter profiles indicate more even performance across work domains.</p>
+      <p class="note">Sharp jumps in the median line indicate cross-sector specialization. Wide stems indicate that the sector itself contains both easy and hard subfields for that model.</p>
     </article>
   `;
 }
@@ -1056,34 +1052,41 @@ function renderJaggednessTable(models) {
       <div class="section-head">
         <div>
           <p class="section-kicker">Breakdown</p>
-          <h3>Macro-group table</h3>
+          <h3>Sector min, median, and max</h3>
         </div>
       </div>
-      <p class="note panel-subnote">Positive deltas mean the model is stronger in that macro group than on GDPval overall.</p>
+      <p class="note panel-subnote">Each value is an occupation-level Wins+T average inside that sector. Median cells also show the difference from the model's overall GDPval Wins+T.</p>
       <div class="table-wrap">
         <table class="data-table jagged-table">
           <thead>
             <tr>
-              <th>Group</th>
-              <th>Included sectors</th>
-              <th>Tasks</th>
+              <th rowspan="2">Sector</th>
+              <th rowspan="2">Subfields</th>
               ${models.map((model) => `
-                <th>${esc(model.label)} Wins+T</th>
-                <th>${esc(model.label)} Delta vs overall</th>
+                <th colspan="4">${esc(model.label)}</th>
+              `).join('')}
+            </tr>
+            <tr>
+              ${models.map(() => `
+                <th>Low</th>
+                <th>Median</th>
+                <th>High</th>
+                <th>Span</th>
               `).join('')}
             </tr>
           </thead>
           <tbody>
-            ${macroGroups.map((group) => `
+            ${sectorDisplayMeta.map((sector) => `
               <tr>
-                <td><strong>${esc(group.label)}</strong></td>
-                <td>${esc(group.sectors.join(' · '))}</td>
-                <td>${formatInteger(macroGroupMetaById.get(group.id)?.taskCount || 0)}</td>
+                <td class="sector-cell"><strong>${esc(sector.name)}</strong></td>
+                <td>${formatInteger(sector.occupationCount || 0)}</td>
                 ${models.map((model) => {
-                  const row = jaggednessSeries(model.modelId).find((item) => item.id === group.id);
+                  const row = jaggednessSeries(model.modelId).find((item) => item.name === sector.name);
                   return `
-                    <td>${row ? formatPercent(row.winOrTieRate) : 'N/A'}</td>
-                    <td class="delta-cell">${row ? `<span class="badge ${row.deltaWinOrTieRate >= 0 ? 'good' : 'warn'}">${formatDelta(row.deltaWinOrTieRate)}</span>` : 'N/A'}</td>
+                    <td class="numeric-cell">${row ? formatPercent(row.minWinOrTieRate) : 'N/A'}</td>
+                    <td class="numeric-cell">${row ? `${formatPercent(row.medianWinOrTieRate)}<span class="note median-note">${formatDelta(row.deltaMedianVsOverall)}</span>` : 'N/A'}</td>
+                    <td class="numeric-cell">${row ? formatPercent(row.maxWinOrTieRate) : 'N/A'}</td>
+                    <td class="numeric-cell">${row ? `<span class="badge ${row.spread <= 0.22 ? 'good' : row.spread <= 0.38 ? 'soft' : 'warn'}">${formatPoints(row.spread)}</span>` : 'N/A'}</td>
                   `;
                 }).join('')}
               </tr>
@@ -1095,80 +1098,9 @@ function renderJaggednessTable(models) {
   `;
 }
 
-function renderMacroCeilingPanel() {
-  const width = 820;
-  const height = 330;
-  const margin = { top: 24, right: 18, bottom: 74, left: 58 };
-  const innerWidth = width - margin.left - margin.right;
-  const innerHeight = height - margin.top - margin.bottom;
-  const ticks = [0, 0.25, 0.5, 0.75, 1];
-  const groupStep = innerWidth / Math.max(macroTopPerformance.length, 1);
-  const barGap = 10;
-  const barWidth = Math.min(28, Math.max(16, (groupStep - 28) / 2));
-  const xForGroup = (index) => margin.left + (groupStep * index) + (groupStep / 2);
-  const yFor = (value) => margin.top + innerHeight - (value * innerHeight);
-  return `
-    <article class="panel">
-      <div class="section-head">
-        <div>
-          <p class="section-kicker">Model-agnostic ceiling</p>
-          <h3>Best observed performance by field group</h3>
-        </div>
-        <span class="badge soft">${macroTopPerformance.length} groups</span>
-      </div>
-      <p class="note">Field groups run left to right so peaks and dips read like the Jaggedness chart below. Teal shows the highest wins+t reached by any visible model, and amber shows the highest outright-win rate.</p>
-      <div class="chart-legend">
-        <div class="legend-chip">
-          <span class="legend-swatch" style="--swatch:#1f5c63;"></span>
-          <div><strong>Top Wins+T</strong></div>
-        </div>
-        <div class="legend-chip">
-          <span class="legend-swatch" style="--swatch:#c78b35;"></span>
-          <div><strong>Top Wins</strong></div>
-        </div>
-      </div>
-      <div class="jagged-chart-shell ceiling-chart-shell">
-        <svg class="jagged-chart ceiling-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Best wins and wins plus ties by field group">
-          <defs>
-            <linearGradient id="ceilingWinsTie" x1="0" y1="1" x2="0" y2="0">
-              <stop offset="0%" stop-color="rgba(31, 92, 99, 0.72)" />
-              <stop offset="100%" stop-color="rgba(31, 92, 99, 0.28)" />
-            </linearGradient>
-            <linearGradient id="ceilingWins" x1="0" y1="1" x2="0" y2="0">
-              <stop offset="0%" stop-color="#cf9b4e" />
-              <stop offset="100%" stop-color="#e5c48a" />
-            </linearGradient>
-          </defs>
-          ${ticks.map((tick) => `
-            <g>
-              <line x1="${margin.left}" y1="${yFor(tick)}" x2="${width - margin.right}" y2="${yFor(tick)}" stroke="#d8d1c2" stroke-width="1" />
-              <text x="${margin.left - 10}" y="${yFor(tick) + 4}" text-anchor="end" fill="#5f695f" font-size="12">${esc(formatPercent(tick))}</text>
-            </g>
-          `).join('')}
-          ${macroTopPerformance.map((row, index) => {
-            const center = xForGroup(index);
-            const winsTieHeight = innerHeight - (yFor(row.topWinOrTieRate) - margin.top);
-            const winsHeight = innerHeight - (yFor(row.topWinRate) - margin.top);
-            return `
-              <g>
-                <line x1="${center}" y1="${margin.top}" x2="${center}" y2="${height - margin.bottom + 8}" stroke="rgba(185, 173, 152, 0.28)" stroke-width="1" />
-                <rect x="${center - barGap / 2 - barWidth}" y="${yFor(row.topWinOrTieRate)}" width="${barWidth}" height="${winsTieHeight}" rx="10" fill="url(#ceilingWinsTie)" />
-                <rect x="${center + barGap / 2}" y="${yFor(row.topWinRate)}" width="${barWidth}" height="${winsHeight}" rx="10" fill="url(#ceilingWins)" />
-                <text x="${center}" y="${height - 30}" text-anchor="middle" fill="#1d2429" font-size="13" font-weight="600">${esc(macroGroups[index].shortLabel)}</text>
-                <text x="${center}" y="${height - 12}" text-anchor="middle" fill="#5f695f" font-size="11">${formatInteger(row.taskCount)} tasks</text>
-              </g>
-            `;
-          }).join('')}
-        </svg>
-      </div>
-    </article>
-  `;
-}
-
 function renderJaggednessView() {
   const models = selectedCompareModels();
   return `
-    ${renderMacroCeilingPanel()}
     ${renderJaggednessChart(models)}
     ${renderJaggednessTable(models)}
   `;
@@ -1226,7 +1158,7 @@ function renderJaggednessSidebar() {
     <div>
       <p class="preview-kicker">Jaggedness</p>
       <h3>How to read this view</h3>
-      <p class="empty-copy">Macro spread is the best-vs-worst grouped-domain gap. Subfield spread is the best-vs-worst occupation gap, which shows where a model is most uneven.</p>
+      <p class="empty-copy">Each sector uses every public GDPval subfield inside that sector. The line follows the median subfield result, while the stem shows the weakest to strongest subfield average.</p>
     </div>
     <div class="preview-stack">
       <div class="preview-box">
@@ -1234,10 +1166,10 @@ function renderJaggednessSidebar() {
           <strong>Interpretation guide</strong>
           <span class="badge soft">lower = steadier</span>
         </div>
-        <div class="note">Use the first chart to compare the strongest observed results across grouped domains. Use the second chart to compare the selected models. The cards below show how far each model swings between its best and weakest subfields.</div>
+        <div class="note">Use three signals together: the median line across sectors, the within-sector stem width, and the gap between each sector median and the model's overall baseline. This now uses the real GDPval sectors rather than bundled macro groups.</div>
       </div>
       ${models.map((model, index) => {
-        const summary = modelMacroSummary(model.modelId);
+        const summary = modelSectorSummary(model.modelId);
         const occupationSummary = modelOccupationSummary(model.modelId);
         return `
           <div class="metric-card">
@@ -1245,17 +1177,21 @@ function renderJaggednessSidebar() {
               <strong>${esc(model.label)}</strong>
               <span class="legend-chip compact">
                 <span class="legend-swatch" style="--swatch:${comparePalette[index % comparePalette.length]};"></span>
-                <span class="note">overall ${formatPercent(summary.overall)} · mean deviation ${formatDelta(summary.jaggedness)}</span>
+                <span class="note">overall ${formatPercent(summary.overall)} · mean sector deviation ${formatPoints(summary.meanDeviation)}</span>
               </span>
             </div>
             <div class="metric-grid">
               <div class="metric-cell">
-                <div class="key-label">Macro spread</div>
-                <div class="metric-value">${formatDelta(summary.spread)}</div>
+                <div class="key-label">Highest sector median</div>
+                <div>${summary.highestMedian ? `${esc(summary.highestMedian.shortLabel)} · ${formatPercent(summary.highestMedian.medianWinOrTieRate)}` : 'N/A'}</div>
               </div>
               <div class="metric-cell">
-                <div class="key-label">Subfield spread</div>
-                <div class="metric-value">${formatDelta(occupationSummary.spread)}</div>
+                <div class="key-label">Lowest sector median</div>
+                <div>${summary.lowestMedian ? `${esc(summary.lowestMedian.shortLabel)} · ${formatPercent(summary.lowestMedian.medianWinOrTieRate)}` : 'N/A'}</div>
+              </div>
+              <div class="metric-cell">
+                <div class="key-label">Widest sector span</div>
+                <div>${summary.widest ? `${esc(summary.widest.shortLabel)} · ${formatPoints(summary.widest.spread)}` : 'N/A'}</div>
               </div>
               <div class="metric-cell">
                 <div class="key-label">Best subfield</div>
@@ -1265,27 +1201,14 @@ function renderJaggednessSidebar() {
                 <div class="key-label">Weakest subfield</div>
                 <div>${occupationSummary.weakest ? `${esc(occupationSummary.weakest.occupation)} · ${formatPercent(occupationSummary.weakest.winOrTieRate)}` : 'N/A'}</div>
               </div>
+              <div class="metric-cell">
+                <div class="key-label">Best-vs-worst subfield</div>
+                <div class="metric-value">${formatPoints(occupationSummary.spread)}</div>
+              </div>
             </div>
           </div>
         `;
       }).join('')}
-      <div class="preview-box">
-        <div class="preview-head">
-          <strong>How groups were combined</strong>
-          <span class="badge soft">${macroGroups.length} macro groups</span>
-        </div>
-        <div class="group-map">
-          ${macroGroupMeta.map((group) => `
-            <div class="group-map-item">
-              <strong>${esc(group.label)}</strong>
-              <div class="note">${formatInteger(group.taskCount)} tasks · ${group.occupationCount} subfields</div>
-              <div class="sector-list">
-                ${group.sectors.map((sector) => `<span class="badge soft">${esc(sector)}</span>`).join('')}
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      </div>
     </div>
   `;
 }
@@ -1541,6 +1464,3 @@ document.addEventListener('click', (event) => {
 });
 
 renderAll();
-
-
-
