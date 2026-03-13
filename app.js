@@ -1083,7 +1083,7 @@ function renderJaggednessTable(models) {
                   const row = jaggednessSeries(model.modelId).find((item) => item.id === group.id);
                   return `
                     <td>${row ? formatPercent(row.winOrTieRate) : 'N/A'}</td>
-                    <td>${row ? `<span class="badge ${row.deltaWinOrTieRate >= 0 ? 'good' : 'warn'}">${formatDelta(row.deltaWinOrTieRate)}</span>` : 'N/A'}</td>
+                    <td class="delta-cell">${row ? `<span class="badge ${row.deltaWinOrTieRate >= 0 ? 'good' : 'warn'}">${formatDelta(row.deltaWinOrTieRate)}</span>` : 'N/A'}</td>
                   `;
                 }).join('')}
               </tr>

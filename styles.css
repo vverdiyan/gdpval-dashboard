@@ -86,11 +86,12 @@ button, input, select { font: inherit; }
 .masthead-subtitle {
   margin: 0;
   max-width: none;
-  color: var(--accent);
-  font-size: 1.06rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.35;
+  color: color-mix(in srgb, var(--accent) 82%, #12383c);
+  font-size: 1.09rem;
+  font-weight: 700;
+  letter-spacing: -0.012em;
+  line-height: 1.28;
+  text-wrap: balance;
   white-space: nowrap;
 }
 
@@ -657,6 +658,16 @@ input:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+.jagged-table .delta-cell {
+  white-space: nowrap;
+}
+
+.jagged-table .delta-cell .badge {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
 .group-map {
   display: grid;
   gap: 10px;
@@ -763,7 +774,20 @@ input:disabled {
     grid-template-columns: 1fr;
   }
 
-  .switch-pill,
+  .view-switch {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .switch-pill {
+    width: auto;
+    min-width: 148px;
+    flex: 0 0 auto;
+  }
+
   .preview-tab {
     width: 100%;
     justify-content: space-between;
@@ -776,12 +800,7 @@ input:disabled {
   .masthead-subtitle {
     white-space: normal;
     font-size: 1rem;
+    line-height: 1.34;
   }
-}
-
-.toolbar-context {
-  margin: 4px 2px 0;
-  color: var(--muted);
-  line-height: 1.5;
 }
 
