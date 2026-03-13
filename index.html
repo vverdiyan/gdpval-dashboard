@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GDPval Dashboard</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./config.js"></script>
+  <script defer src="./bootstrap.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="masthead">
+      <div class="masthead-copy">
+        <h1>GDPval Dashboard</h1>
+      </div>
+    </header>
+
+    <section class="toolbar-card">
+      <div class="toolbar-grid">
+        <label class="field">
+          <span class="field-label">Sector</span>
+          <select id="sector-select"></select>
+        </label>
+
+        <label class="field field-wide">
+          <span class="field-label">Subfield</span>
+          <select id="occupation-select"></select>
+        </label>
+
+        <label class="field">
+          <span class="field-label">Find</span>
+          <input id="occupation-search" type="search" placeholder="Search occupations">
+        </label>
+
+        <div class="field field-actions">
+          <span class="field-label">Sources</span>
+          <div class="link-row">
+            <a href="https://evals.openai.com/gdpval/leaderboard" target="_blank" rel="noreferrer">Official leaderboard</a>
+            <a href="https://huggingface.co/datasets/openai/gdpval" target="_blank" rel="noreferrer">Hugging Face dataset</a>
+          </div>
+        </div>
+      </div>
+      <p class="toolbar-note">Public-safe web build. The dashboard uses a reduced public snapshot and opens official source files from Hugging Face. Inline extracted previews are disabled.</p>
+      <div class="view-switch" id="view-switch"></div>
+    </section>
+
+    <main class="workspace">
+      <section class="main-column">
+        <section class="focus-card" id="focus-card"></section>
+        <section class="view-stack" id="view-content"></section>
+      </section>
+
+      <aside class="preview-column">
+        <section class="preview-card" id="preview-panel"></section>
+      </aside>
+    </main>
+  </div>
+</body>
+</html>
+
