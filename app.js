@@ -424,14 +424,11 @@ function renderOccupationFocusCard() {
   const occupation = currentOccupationRecord();
   const scores = currentScores();
   const topModel = scores[0];
-  const files = currentFiles();
-  const previewable = files.filter((file) => file.previewAvailable).length;
   return `
     <div class="focus-top">
       <div>
         <p class="section-kicker">Subfield</p>
         <h2>${esc(occupation.name)}</h2>
-        <p class="lede">${esc(occupation.sector)}. Web-loaded GDPval snapshot with source files on Hugging Face.</p>
         <div class="badge-row">
           <span class="badge soft">${esc(occupation.sector)}</span>
           ${occupation.isInvestor ? '<span class="badge good">Investor subset</span>' : ''}
@@ -439,28 +436,19 @@ function renderOccupationFocusCard() {
         </div>
       </div>
     </div>
-    <div class="focus-stats">
+    <div class="focus-stats focus-stats-compact">
       <div class="mini-stat">
-        <div class="stat-label">Tasks</div>
-        <strong>${occupation.taskCount}</strong>
-        <div class="note">exact task rows</div>
-      </div>
-      <div class="mini-stat">
-        <div class="stat-label">Files</div>
-        <strong>${occupation.attachmentCount}</strong>
-        <div class="note">public attachments</div>
-      </div>
-      <div class="mini-stat">
-        <div class="stat-label">Open only</div>
-        <strong>${Math.max(files.length - previewable, 0)}</strong>
-        <div class="note">official source links</div>
+        <div class="stat-label">Top Wins</div>
+        <strong>${topModel ? formatPercent(topModel.winRate) : 'N/A'}</strong>
+        <div class="note">best judged-better rate here</div>
       </div>
       <div class="mini-stat">
         <div class="stat-label">Top Wins+T</div>
         <strong>${topModel ? formatPercent(topModel.winOrTieRate) : 'N/A'}</strong>
-        <div class="note">occupation-level score</div>
+        <div class="note">best as-good-or-better rate</div>
       </div>
     </div>
+    <p class="note focus-note">${esc(scoreMeaningSentence())}</p>
   `;
 }
 
@@ -596,7 +584,6 @@ function renderPerformancePanel(scores) {
         </div>
         <span class="badge soft">${scores.length} models</span>
       </div>
-      <p class="note panel-subnote">${esc(scoreMeaningSentence())}</p>
       <div class="bar-stack">
         ${rows.map((row) => `
           <div class="bar-row">
