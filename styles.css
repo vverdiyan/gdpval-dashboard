@@ -288,6 +288,11 @@ input[type="search"]:focus {
   align-items: start;
 }
 
+.focus-top > div {
+  display: grid;
+  gap: 6px;
+}
+
 .focus-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
