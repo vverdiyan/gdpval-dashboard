@@ -850,43 +850,16 @@ function renderFilesView() {
 
 function renderModelsView() {
   const scores = [...visibleModels].sort((a, b) => a.overallRank - b.overallRank || b.overallWinOrTieRate - a.overallWinOrTieRate);
-  const max = Math.max(...scores.map((row) => row.overallWinOrTieRate), 0.001);
   return `
-    <article class="panel">
-      <div class="section-head">
-        <div>
-          <p class="section-kicker">Official leaderboard</p>
-          <h3>Overall benchmark ranking</h3>
-        </div>
-        <span class="badge soft">${scores.length} models</span>
-      </div>
-      <p class="note panel-subnote">This leaderboard is benchmark-wide. It does not change with sector or subfield selection. ${esc(scoreMeaningSentence())}</p>
-      <div class="bar-stack">
-        ${scores.map((row) => `
-          <div class="bar-row">
-            <div class="row-head">
-              <strong>#${row.overallRank} ${esc(row.label)}</strong>
-              <span class="note">${esc(row.provider || 'provider unknown')}</span>
-            </div>
-            <div class="track">
-              <span class="fill-base" style="width:${(row.overallWinOrTieRate / max) * 100}%"></span>
-              <span class="fill-strong" style="width:${(row.overallWinRate / max) * 100}%"></span>
-            </div>
-            <div class="badge-row" style="margin-top:8px;">
-              <span class="badge soft">${formatPercent(row.overallWinRate)} wins</span>
-              <span class="badge soft">${formatPercent(row.overallWinOrTieRate)} wins+t</span>
-            </div>
-          </div>
-        `).join('')}
-      </div>
-    </article>
     <article class="panel">
       <div class="section-head">
         <div>
           <p class="section-kicker">Model table</p>
           <h3>Official overall results</h3>
         </div>
+        <span class="badge soft">${scores.length} models</span>
       </div>
+      <p class="note panel-subnote">This leaderboard is benchmark-wide. It does not change with sector or subfield selection. ${esc(scoreMeaningSentence())}</p>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
