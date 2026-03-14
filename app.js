@@ -15,7 +15,14 @@ const refs = {
   focusCard: document.getElementById('focus-card'),
   viewContent: document.getElementById('view-content'),
   previewPanel: document.getElementById('preview-panel'),
+  toolbarGrid: document.querySelector('.toolbar-grid'),
+  toolbarScopeNote: document.getElementById('toolbar-scope-note'),
+  workspace: document.querySelector('.workspace'),
+  previewColumn: document.querySelector('.preview-column'),
 };
+refs.sectorField = refs.sectorSelect?.closest('.field') || null;
+refs.occupationField = refs.occupationSelect?.closest('.field') || null;
+refs.searchField = refs.occupationSearch?.closest('.field') || null;
 
 const visibleModels = dataset.models.filter((model) => !model.hidden);
 const defaultPrimaryModelId = visibleModels.find((model) => model.label === 'GPT-5.2')?.modelId || visibleModels[0]?.modelId || '';
@@ -50,7 +57,7 @@ const previewTabs = [
   { id: 'overview', label: 'Overview' },
   { id: 'tables', label: 'Tables' },
   { id: 'text', label: 'Text' },
-  { id: 'open', label: 'Open File' },
+  { id: 'open', label: 'Source' },
 ];
 const sectors = ['All sectors', ...dataset.sectors.map((sector) => sector.name)];
 const occupationRecords = dataset.occupations.map((occupation) => ({
@@ -193,6 +200,24 @@ function formatVerifiedAt() {
 
 function scoreMeaningSentence() {
   return 'Wins means the AI was judged better than the human expert. Wins+T includes cases where the AI matched the human.';
+}
+
+function isGlobalView() {
+  return state.view === 'jaggedness' || state.view === 'models';
+}
+
+function needsPreviewColumn() {
+  return state.view !== 'models';
+}
+
+function toolbarScopeCopy() {
+  if (state.view === 'jaggedness') {
+    return 'Jaggedness compares models across the full benchmark, so sector and subfield filters are not used in this view.';
+  }
+  if (state.view === 'models') {
+    return 'Leaderboard is benchmark-wide, so sector and subfield filters are not used in this view.';
+  }
+  return '';
 }
 
 function occupationsBySector() {
@@ -462,20 +487,14 @@ function renderJaggednessFocusCard() {
         <p class="lede">Each sector below uses all of its underlying GDPval subfields. The dot is the median subfield Wins+T for the selected model, and the vertical stem shows the weakest-to-strongest subfield average inside that sector.</p>
         <div class="badge-row">
           ${models.map((model) => `<span class="badge soft">${esc(model.label)}</span>`).join('')}
-          <span class="badge good">all 44 subfields included</span>
         </div>
       </div>
     </div>
-    <div class="focus-stats">
+    <div class="focus-stats focus-stats-triple">
       <div class="mini-stat">
         <div class="stat-label">Sectors</div>
         <strong>${dataset.sectors.length}</strong>
         <div class="note">actual GDPval sectors</div>
-      </div>
-      <div class="mini-stat">
-        <div class="stat-label">Subfields</div>
-        <strong>${occupationRecords.length}</strong>
-        <div class="note">included in the spread</div>
       </div>
       <div class="mini-stat">
         <div class="stat-label">Signal</div>
@@ -499,33 +518,10 @@ function renderLeaderboardFocusCard() {
       <div>
         <p class="section-kicker">Leaderboard</p>
         <h2>Overall GDPval results</h2>
-        <p class="lede">The official model ranking across the public GDPval benchmark. This view is benchmark-wide and does not depend on the selected sector or subfield.</p>
+        <p class="lede">Benchmark-wide model results across the public GDPval evaluation.</p>
         <div class="badge-row">
-          <span class="badge soft">Official benchmark-wide view</span>
-          ${topModel ? `<span class="badge good">Top model: ${esc(topModel.label)}</span>` : ``}
+          ${topModel ? `<span class="badge good">Top model: ${esc(topModel.label)} · ${formatPercent(topModel.overallWinOrTieRate)} Wins+T</span>` : ``}
         </div>
-      </div>
-    </div>
-    <div class="focus-stats">
-      <div class="mini-stat">
-        <div class="stat-label">Models</div>
-        <strong>${scores.length}</strong>
-        <div class="note">official leaderboard rows</div>
-      </div>
-      <div class="mini-stat">
-        <div class="stat-label">Tasks</div>
-        <strong>${formatInteger(dataset.tasks.length)}</strong>
-        <div class="note">public task rows</div>
-      </div>
-      <div class="mini-stat">
-        <div class="stat-label">Top Wins+T</div>
-        <strong>${topModel ? formatPercent(topModel.overallWinOrTieRate) : `N/A`}</strong>
-        <div class="note">best overall model result</div>
-      </div>
-      <div class="mini-stat">
-        <div class="stat-label">Source</div>
-        <strong>OpenAI</strong>
-        <div class="note">official leaderboard and public files</div>
       </div>
     </div>
   `;
@@ -549,7 +545,6 @@ function renderTaskTable(tasks, actionLabel = 'Open detail', action = 'go-task')
             <th>Rubric</th>
             <th>Points</th>
             <th>Files</th>
-            <th>Inline</th>
             <th></th>
           </tr>
         </thead>
@@ -563,7 +558,6 @@ function renderTaskTable(tasks, actionLabel = 'Open detail', action = 'go-task')
               <td>${task.rubricCount}</td>
               <td>${task.positivePoints}</td>
               <td>${task.attachmentCount}</td>
-              <td>${task.previewableAttachmentCount}</td>
               <td><button class="table-button" data-action="${action}" data-task-id="${task.taskId}">${esc(actionLabel)}</button></td>
             </tr>
           `).join('')}
@@ -633,7 +627,7 @@ function renderDeltaPanel(scores) {
 
 function renderAttachmentPanel(files) {
   const grouped = [...groupBy(files, (file) => file.fileType || 'unknown').entries()]
-    .map(([type, rows]) => ({ type, total: rows.length, inline: rows.filter((row) => row.previewAvailable).length }))
+    .map(([type, rows]) => ({ type, total: rows.length }))
     .sort((a, b) => b.total - a.total || a.type.localeCompare(b.type));
   const max = Math.max(...grouped.map((row) => row.total), 1);
   return     `
@@ -651,9 +645,8 @@ function renderAttachmentPanel(files) {
             <strong>${esc(row.type.toUpperCase())}</strong>
             <div class="type-track">
               <span class="type-base" style="width:${(row.total / max) * 100}%"></span>
-              <span class="type-inline" style="width:${(row.inline / max) * 100}%"></span>
             </div>
-            <span class="note">${row.inline} / ${row.total}</span>
+            <span class="note">${row.total}</span>
           </div>
         `).join('') || '<div class="empty-state"><div class="empty-copy">No files are indexed for this occupation.</div></div>'}
       </div>
@@ -707,7 +700,6 @@ function renderTaskFiles(task) {
             <div class="badge-row">
               <span class="badge soft">${esc(file.fileType.toUpperCase())}</span>
               <span class="badge ${file.kind === 'reference' ? 'soft' : 'warn'}">${esc(file.kind)}</span>
-              <span class="badge ${file.previewAvailable ? 'good' : 'warn'}">${file.previewAvailable ? 'inline' : 'open only'}</span>
             </div>
           </div>
           <div class="note">${formatBytes(file.size)} · official file link</div>
@@ -774,7 +766,6 @@ function renderTasksView() {
           <span class="badge soft">${task.rubricCount} rubric items</span>
           <span class="badge soft">${task.positivePoints} positive points</span>
           <span class="badge soft">${task.attachmentCount} files</span>
-          <span class="badge soft">${task.previewableAttachmentCount} inline</span>
         </div>
         <div class="detail-grid">
           <div>
@@ -807,7 +798,6 @@ function renderFilesView() {
           <span class="badge soft">${files.length} files</span>
           <span class="badge soft">${files.filter((file) => file.kind === 'reference').length} reference</span>
           <span class="badge soft">${files.filter((file) => file.kind === 'deliverable').length} deliverable</span>
-          <span class="badge ${files.some((file) => file.previewAvailable) ? 'good' : 'warn'}">${files.filter((file) => file.previewAvailable).length} inline</span>
         </div>
       </div>
       <div class="table-wrap">
@@ -1183,8 +1173,8 @@ function renderPreviewPanel() {
     refs.previewPanel.innerHTML = `
       <div>
         <p class="preview-kicker">Leaderboard</p>
-        <h3>Benchmark-wide model ranking</h3>
-        <p class="empty-copy">This view is independent of the current sector and subfield. Use the official leaderboard link to cross-check the source ranking.</p>
+        <h3>Source links</h3>
+        <p class="empty-copy">Use the official benchmark links to cross-check the published results and task materials.</p>
       </div>
       <div class="preview-stack">
         <div class="preview-box">
@@ -1205,7 +1195,7 @@ function renderPreviewPanel() {
         <div>
           <p class="preview-kicker">Preview</p>
           <h3>No file selected</h3>
-          <p class="empty-copy">Pick a file from Tasks or Files to inspect extracted text, tables, metadata, and the official source links.</p>
+          <p class="empty-copy">Select a file from Tasks or Files to inspect the source material and extracted preview content.</p>
         </div>
       </div>
     `;
@@ -1255,9 +1245,7 @@ function renderPreviewPanel() {
           <div><div class="key-label">Type</div><div>${esc(file.fileType.toUpperCase())}</div></div>
           <div><div class="key-label">Role</div><div>${esc(file.kind)}</div></div>
           <div><div class="key-label">Size</div><div>${formatBytes(file.size)}</div></div>
-          <div><div class="key-label">Inline Preview</div><div>${entry?.supportsInline ? 'Yes' : 'No'}</div></div>
           <div><div class="key-label">Task</div><div>${task ? esc(shortText(task.promptPreview, 72)) : 'Unavailable'}</div></div>
-          <div><div class="key-label">HF URI</div><div>${esc(file.hfUri || '-')}</div></div>
         </div>
         ${textBlocks.length ? `<div class="preview-text-list">${textBlocks.slice(0, 5).map((block) => `<div class="text-block"><strong>${esc(block.label || 'Block')}</strong>${esc(block.text || '')}</div>`).join('')}</div>` : ''}
       </div>
@@ -1287,19 +1275,27 @@ function renderAll() {
   syncState();
   renderSectorSelect();
   renderOccupationSelect();
-  const globalView = state.view === 'jaggedness' || state.view === 'models';
-  refs.sectorSelect.disabled = globalView;
-  refs.occupationSelect.disabled = globalView || refs.occupationSelect.disabled;
-  refs.occupationSearch.disabled = globalView;
-  refs.occupationSearch.placeholder = state.view === 'jaggedness'
-    ? 'Use the model selectors below'
-    : state.view === 'models'
-      ? 'Leaderboard is benchmark-wide'
-      : 'Search occupations';
+  const globalView = isGlobalView();
+  refs.sectorSelect.disabled = false;
+  refs.occupationSelect.disabled = refs.occupationSelect.disabled;
+  refs.occupationSearch.disabled = false;
+  refs.occupationSearch.placeholder = 'Search occupations';
+  refs.sectorField?.classList.toggle('is-hidden', globalView);
+  refs.occupationField?.classList.toggle('is-hidden', globalView);
+  refs.searchField?.classList.toggle('is-hidden', globalView);
+  refs.toolbarGrid?.classList.toggle('is-global', globalView);
+  if (refs.toolbarScopeNote) {
+    refs.toolbarScopeNote.hidden = !globalView;
+    refs.toolbarScopeNote.textContent = toolbarScopeCopy();
+  }
+  refs.workspace?.classList.toggle('no-preview', !needsPreviewColumn());
+  refs.previewColumn?.classList.toggle('is-hidden', !needsPreviewColumn());
   renderViewSwitch();
   renderFocusCard();
   renderViewContent();
-  renderPreviewPanel();
+  if (needsPreviewColumn()) {
+    renderPreviewPanel();
+  }
 }
 
 function ensurePreviewLoaded(fileId) {
